@@ -1,74 +1,67 @@
+"""Smoke tests for the Vidyut Prajna intelligence layer."""
+
+from __future__ import annotations
+
 import torch
-import pandas as pd
-import numpy as np
-import os
-from graph_utils import get_adjacency_matrix
-from model import STGCNBlock, VidyutPrajnaForecaster
+
+from src.intelligence.forecaster import FUTURE_EXOG_COLS, SEQUENCE_FEATURE_COLS, STGCNForecaster
+from src.intelligence.graph_utils import get_adjacency_matrix
+from src.intelligence.model import STGCNBlock, VidyutPrajnaForecaster
+from src.spatial_grid.simulation import CityConfig, generate_synthetic_data
+
 
 def test_intelligence_suite():
-    # 1. Setup Data Paths
-    REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    DATA_PATH = os.path.join(REPO_ROOT, "data", "raw", "synthetic_telemetry.csv")
-    
-    if not os.path.exists(DATA_PATH):
-        print("Error: Run generator.py first to create synthetic data.")
-        return
-
-    # 2. Test Adjacency Matrix Logic
-    print("--- Testing Graph Utilities ---")
-    df = pd.read_csv(DATA_PATH)
-    unique_hexes = df['hex_id'].unique().tolist()
-    num_nodes = len(unique_hexes)
-    
-    adj = get_adjacency_matrix(unique_hexes)
-    
-    # Assertions for Graph Sanity
-    assert adj.shape == (num_nodes, num_nodes), f"Expected ({num_nodes}, {num_nodes}), got {adj.shape}"
-    assert torch.all(torch.diag(adj) > 0), "Self-loops (diagonal) missing in adjacency matrix."
-    print(f"Adjacency Matrix Verified: {num_nodes}x{num_nodes} nodes.")
-
-    # 3. Test STGCN Block
-    print("\n--- Testing STGCN Block ---")
-    batch_size = 8
-    time_steps = 12
-    in_channels = 2
-    out_channels = 16
-    
-    mock_input = torch.randn(batch_size, time_steps, num_nodes, in_channels)
-    
-    stgcn_block = STGCNBlock(in_channels, out_channels, adj)
-    
-    with torch.no_grad():
-        output = stgcn_block(mock_input)
-    
-    expected_shape = (batch_size, time_steps, num_nodes, out_channels)
-    assert output.shape == expected_shape, f"Expected {expected_shape}, got {output.shape}"
-    print(f"STGCN Block Forward Pass Verified: Output shape is {output.shape}")
-
-    # 4. Test Full Forecaster Model
-    print("\n--- Testing VidyutPrajnaForecaster ---")
-    forecaster = VidyutPrajnaForecaster(
-        adj_matrix=adj,
-        in_channels=2,  # [residential_kw, ev_unmanaged_kw]
-        hidden_channels=32,
-        out_channels=1,  # Predict total_demand_kw
-        num_blocks=2
+    data, grid, adj = generate_synthetic_data(
+        CityConfig(max_cells=18, num_days=4, freq="1h", scenario="orr_whitefield")
     )
-    
-    with torch.no_grad():
-        prediction = forecaster(mock_input)
-    
-    # Output: (batch, num_nodes, 1) - next hour prediction per hex
-    expected_pred_shape = (batch_size, num_nodes, 1)
-    assert prediction.shape == expected_pred_shape, f"Expected {expected_pred_shape}, got {prediction.shape}"
-    print(f"Forecaster Verified: Predicts {prediction.shape} (batch, nodes, features)")
-    
-    # 5. Test model parameter count
-    total_params = sum(p.numel() for p in forecaster.parameters())
-    trainable_params = sum(p.numel() for p in forecaster.parameters() if p.requires_grad)
-    print(f"Model Parameters: {trainable_params:,} trainable / {total_params:,} total")
+    cells = sorted(grid["h3_cell"].tolist())
+    adj_matrix = get_adjacency_matrix(cells)
+    assert adj_matrix.shape == (len(cells), len(cells))
+    assert torch.all(torch.diag(adj_matrix) > 0)
 
-    print("\nAll Intelligence Plane unit tests PASSED.")
+    batch_size = 2
+    time_steps = 8
+    stgcn_block = STGCNBlock(len(SEQUENCE_FEATURE_COLS), 16, adj_matrix)
+    mock_hist = torch.randn(batch_size, time_steps, len(cells), len(SEQUENCE_FEATURE_COLS))
+    with torch.no_grad():
+        block_out = stgcn_block(mock_hist)
+    assert block_out.shape == (batch_size, time_steps, len(cells), 16)
+
+    model = VidyutPrajnaForecaster(
+        adj_matrix=adj_matrix,
+        in_channels=len(SEQUENCE_FEATURE_COLS),
+        future_channels=len(FUTURE_EXOG_COLS),
+        hidden_channels=16,
+        out_channels=1,
+        num_blocks=1,
+    )
+    mock_future = torch.randn(batch_size, len(cells), len(FUTURE_EXOG_COLS))
+    with torch.no_grad():
+        pred = model(mock_hist, mock_future)
+    assert pred.shape == (batch_size, len(cells), 1)
+
+    times = sorted(data["timestamp"].unique())
+    train_times = times[:-12]
+    future_times = times[-12:]
+    train = data[data["timestamp"].isin(train_times)]
+    future = data[data["timestamp"].isin(future_times)]
+
+    forecaster = STGCNForecaster(seq_len=8, epochs=1, hidden_size=16, num_blocks=1)
+    forecaster.fit(train, adj)
+    forecast = forecaster.forecast(train, future, adj, horizon_steps=12)
+    agg_pred = forecast.groupby("timestamp")["predicted_demand_kw"].sum()
+    agg_actual = forecast.groupby("timestamp")["actual_demand_kw"].sum()
+    assert agg_pred.std() > max(1.0, float(agg_actual.std() or 0.0) * 0.25)
+    assert "forecast_method" in forecast.columns
+    assert forecaster.forecast_info.get("forecast_method") is not None
+
+    flat = forecast.copy()
+    flat["stgcn_predicted_demand_kw"] = float(flat["actual_demand_kw"].mean())
+    method, _ = forecaster._choose_forecast_method(flat)
+    assert method in {"seasonal_baseline", "stgcn_seasonal_blend"}
+
+    print("All Intelligence Plane tests PASSED.")
+
 
 if __name__ == "__main__":
     test_intelligence_suite()

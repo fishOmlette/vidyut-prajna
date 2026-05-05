@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, Iterable, List, Tuple
 
 import h3
 import numpy as np
@@ -18,12 +18,13 @@ import pandas as pd
 @dataclass(frozen=True)
 class CityConfig:
     """Configuration for Bengaluru simulation."""
-    h3_resolution: int = 9  # Resolution 9 for ~100m precision
-    max_cells: int = 50
-    num_days: int = 7
-    freq: str = "1h"
+    h3_resolution: int = 8
+    max_cells: int = 54
+    num_days: int = 3
+    freq: str = "30min"
     seed: int = 42
     start: str = "2026-05-01"
+    scenario: str = "orr_whitefield"
 
 
 # Bengaluru neighborhood anchors with zone types
@@ -49,6 +50,21 @@ NEIGHBORHOOD_ANCHORS = [
     {"name": "JP Nagar",         "lat": 12.9063, "lon": 77.5857, "zone_type": "residential"},
     {"name": "Banashankari",     "lat": 12.9255, "lon": 77.5468, "zone_type": "residential"},
 ]
+
+DEMO_SCENARIOS = {
+    "orr_whitefield": {
+        "label": "ORR-Whitefield IT charging corridor",
+        "route": ["HSR Layout", "Sarjapur Road", "Outer Ring Road", "Marathahalli", "Whitefield"],
+    },
+    "south_residential": {
+        "label": "South Bengaluru residential charging belt",
+        "route": ["Banashankari", "JP Nagar", "Jayanagar", "BTM Layout", "HSR Layout"],
+    },
+    "central_commercial": {
+        "label": "Central commercial-mixed demand cluster",
+        "route": ["Majestic", "MG Road", "Indiranagar", "Koramangala"],
+    },
+}
 
 # Zone-specific parameters
 ZONE_PARAMS = {
@@ -116,6 +132,13 @@ def nearest_anchor(lat: float, lon: float) -> Dict:
     return NEIGHBORHOOD_ANCHORS[int(np.argmin(distances))]
 
 
+def _anchor_by_name(name: str) -> Dict:
+    for anchor in NEIGHBORHOOD_ANCHORS:
+        if anchor["name"] == name:
+            return anchor
+    raise KeyError(f"Unknown Bengaluru anchor: {name}")
+
+
 def bescom_tariff_multiplier(hour: float) -> float:
     """BESCOM-style ToU tariff multiplier."""
     if 22.0 <= hour or hour < 6.0:
@@ -133,18 +156,66 @@ def solar_generation_kw(hour: float, capacity_kw: float, cloud_factor: float = 1
     return float(solar)
 
 
+def _grid_path_cells(start_cell: str, end_cell: str) -> List[str]:
+    """Return a contiguous H3 path, with interpolation fallback for rare path failures."""
+    try:
+        return list(h3.grid_path_cells(start_cell, end_cell))
+    except Exception:
+        start_lat, start_lon = h3.cell_to_latlng(start_cell)
+        end_lat, end_lon = h3.cell_to_latlng(end_cell)
+        distance_km = haversine_km(start_lat, start_lon, end_lat, end_lon)
+        samples = max(2, int(distance_km / 0.75))
+        cells: List[str] = []
+        for i in range(samples + 1):
+            frac = i / samples
+            lat = start_lat + frac * (end_lat - start_lat)
+            lon = start_lon + frac * (end_lon - start_lon)
+            cell = h3.latlng_to_cell(lat, lon, h3.get_resolution(start_cell))
+            if not cells or cells[-1] != cell:
+                cells.append(cell)
+        return cells
+
+
+def _scenario_route_cells(config: CityConfig) -> Tuple[List[str], str]:
+    """Build an ordered, contiguous corridor for a hackathon-scale demo."""
+    scenario = DEMO_SCENARIOS.get(config.scenario, DEMO_SCENARIOS["orr_whitefield"])
+    route = [_anchor_by_name(name) for name in scenario["route"]]
+    anchor_cells = [
+        h3.latlng_to_cell(anchor["lat"], anchor["lon"], config.h3_resolution)
+        for anchor in route
+    ]
+
+    ordered: List[str] = []
+    seen: set[str] = set()
+    for start_cell, end_cell in zip(anchor_cells, anchor_cells[1:]):
+        for cell in _grid_path_cells(start_cell, end_cell):
+            if cell not in seen:
+                ordered.append(cell)
+                seen.add(cell)
+
+    if not ordered:
+        ordered = [anchor_cells[0]]
+        seen.add(anchor_cells[0])
+
+    queue = list(ordered)
+    for cell in queue:
+        if len(ordered) >= config.max_cells:
+            break
+        for nbr in sorted(h3.grid_disk(cell, 1)):
+            if nbr not in seen:
+                ordered.append(nbr)
+                seen.add(nbr)
+                queue.append(nbr)
+            if len(ordered) >= config.max_cells:
+                break
+
+    return ordered[: config.max_cells], str(scenario["label"])
+
+
 def build_h3_grid(config: CityConfig) -> pd.DataFrame:
-    """Build H3 hexagonal grid covering Bengaluru neighborhoods."""
+    """Build a contiguous H3 grid around the configured Bengaluru scenario."""
     rng = np.random.default_rng(config.seed)
-    cells: set = set()
-    
-    for anchor in NEIGHBORHOOD_ANCHORS:
-        center = h3.latlng_to_cell(anchor["lat"], anchor["lon"], config.h3_resolution)
-        cells.update(h3.grid_disk(center, 1))
-    
-    ordered_cells = sorted(cells)
-    if len(ordered_cells) > config.max_cells:
-        ordered_cells = sorted(rng.choice(ordered_cells, size=config.max_cells, replace=False).tolist())
+    ordered_cells, scenario_label = _scenario_route_cells(config)
 
     records = []
     for idx, cell in enumerate(ordered_cells):
@@ -160,6 +231,9 @@ def build_h3_grid(config: CityConfig) -> pd.DataFrame:
         ev_adoption = float(rng.uniform(0.35, 1.15))
         charger_density = station_count / max(haversine_km(lat, lon, anchor["lat"], anchor["lon"]), 0.8)
         solar_capacity = float(rng.uniform(15, 80))
+        growth_bonus = {"residential": 0.08, "commercial": 0.06, "logistics": 0.10,
+                        "mixed": 0.11, "it_corridor": 0.16}[zone_type]
+        demand_growth_index = float(np.clip(rng.normal(0.18 + growth_bonus, 0.045), 0.08, 0.45))
         
         records.append({
             "h3_cell": cell,
@@ -167,12 +241,15 @@ def build_h3_grid(config: CityConfig) -> pd.DataFrame:
             "lon": lon,
             "zone_name": str(anchor["name"]),
             "zone_type": zone_type,
+            "scenario": config.scenario,
+            "corridor_name": scenario_label,
             "transformer_capacity_kw": capacity_kw,
             "station_count": station_count,
             "priority_share": priority_share,
             "deadline_steps": deadline_steps,
             "ev_adoption_index": ev_adoption,
             "charger_density_index": charger_density,
+            "demand_growth_index": demand_growth_index,
             "solar_capacity_kw": solar_capacity,
             "cell_rank": idx,
         })
@@ -180,7 +257,7 @@ def build_h3_grid(config: CityConfig) -> pd.DataFrame:
     return pd.DataFrame.from_records(records)
 
 
-def build_h3_adjacency(cells: List[str]) -> Dict[str, List[str]]:
+def build_h3_adjacency(cells: Iterable[str]) -> Dict[str, List[str]]:
     """Build adjacency dictionary for H3 cells."""
     cell_set = set(cells)
     adjacency: Dict[str, List[str]] = {}
@@ -303,10 +380,15 @@ def generate_synthetic_data(config: CityConfig = None) -> Tuple[pd.DataFrame, pd
                 "timestamp": ts,
                 "zone_name": cell["zone_name"],
                 "zone_type": zone_type,
+                "lat": float(cell["lat"]),
+                "lon": float(cell["lon"]),
+                "scenario": cell["scenario"],
+                "corridor_name": cell["corridor_name"],
                 "demand_kw": round(ev_demand_kw, 2),  # EV demand (what we forecast/optimize)
                 "grid_base_load_kw": round(base_load_kw, 2),
                 "total_load_kw": round(total_demand, 2),
                 "transformer_capacity_kw": capacity_kw,
+                "station_count": int(cell["station_count"]),
                 "temperature_c": round(temp, 1),
                 "rainfall_mm": round(rainfall, 2),
                 "traffic_intensity": round(traffic, 3),
@@ -314,6 +396,7 @@ def generate_synthetic_data(config: CityConfig = None) -> Tuple[pd.DataFrame, pd
                 "tariff_multiplier": tariff,
                 "ev_adoption_index": ev_adoption,
                 "charger_density_index": cell["charger_density_index"],
+                "demand_growth_index": cell["demand_growth_index"],
                 "priority_share": cell["priority_share"],
                 "deadline_steps": cell["deadline_steps"],
                 "is_weekend": is_weekend,

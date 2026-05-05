@@ -9,6 +9,7 @@ from .simulation import (
     build_h3_grid,
     build_h3_adjacency,
     NEIGHBORHOOD_ANCHORS,
+    DEMO_SCENARIOS,
     ZONE_PARAMS,
 )
 from .generator import VidyutPrajnaGrid
@@ -20,5 +21,6 @@ __all__ = [
     "build_h3_adjacency",
     "VidyutPrajnaGrid",
     "NEIGHBORHOOD_ANCHORS",
+    "DEMO_SCENARIOS",
     "ZONE_PARAMS",
 ]

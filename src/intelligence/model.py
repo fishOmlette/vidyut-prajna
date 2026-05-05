@@ -34,11 +34,9 @@ class STGCNBlock(nn.Module):
         x = torch.einsum('ij,btjf->btif', self.adj, x)
         x = self.gcn(x)  # Linear transform: (b, t, n, f) -> (b, t, n, out)
         
-        # BatchNorm expects (N, C, L) or (N, C), reshape accordingly
-        x = x.permute(0, 3, 1, 2).reshape(b * x.shape[3], -1, t * n)
-        x = x.reshape(b, -1, t * n)  # (b, out_channels, t*n)
-        x = self.bn_spatial(x)
-        x = x.reshape(b, -1, t, n).permute(0, 2, 3, 1)  # Back to (b, t, n, out)
+        # Normalize feature channels across all batch/time/node positions.
+        out_channels = x.shape[-1]
+        x = self.bn_spatial(x.reshape(b * t * n, out_channels)).reshape(b, t, n, out_channels)
         x = F.relu(x)
         x = self.dropout(x)
         
@@ -52,9 +50,8 @@ class STGCNBlock(nn.Module):
         x = x.reshape(b, n, t, -1).permute(0, 2, 1, 3)  # (b, t, n, out)
         
         # Apply temporal batch norm
-        x_flat = x.permute(0, 3, 1, 2).reshape(b, -1, t * n)
-        x_flat = self.bn_temporal(x_flat)
-        x = x_flat.reshape(b, -1, t, n).permute(0, 2, 3, 1)
+        out_channels = x.shape[-1]
+        x = self.bn_temporal(x.reshape(b * t * n, out_channels)).reshape(b, t, n, out_channels)
         
         return x
 
@@ -65,8 +62,10 @@ class VidyutPrajnaForecaster(nn.Module):
     Predicts next-hour load for each hex cell.
     """
     def __init__(self, adj_matrix, in_channels=2, hidden_channels=32, 
-                 out_channels=1, num_blocks=2, dropout=0.1):
+                 out_channels=1, num_blocks=2, dropout=0.1,
+                 future_channels=0):
         super(VidyutPrajnaForecaster, self).__init__()
+        self.future_channels = future_channels
         
         self.blocks = nn.ModuleList()
         
@@ -77,15 +76,38 @@ class VidyutPrajnaForecaster(nn.Module):
         for _ in range(num_blocks - 1):
             self.blocks.append(STGCNBlock(hidden_channels, hidden_channels, adj_matrix, dropout))
         
-        # Output projection: predict next timestep's load
-        self.output_layer = nn.Linear(hidden_channels, out_channels)
+        if future_channels > 0:
+            self.future_proj = nn.Sequential(
+                nn.Linear(future_channels, hidden_channels),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_channels, hidden_channels),
+                nn.ReLU(),
+            )
+            output_in = hidden_channels * 2
+        else:
+            self.future_proj = None
+            output_in = hidden_channels
+
+        # Output projection: predict target timestep load.
+        self.output_layer = nn.Sequential(
+            nn.Linear(output_in, hidden_channels),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_channels, out_channels),
+        )
     
-    def forward(self, x):
+    def forward(self, x, future_x=None):
         # x: (batch, time_steps, num_nodes, in_channels)
         for block in self.blocks:
             x = block(x)
         
         # Take last timestep for prediction
         x = x[:, -1, :, :]  # (batch, num_nodes, hidden)
+        if self.future_proj is not None:
+            if future_x is None:
+                raise ValueError("future_x is required when future_channels > 0")
+            future_h = self.future_proj(future_x)
+            x = torch.cat([x, future_h], dim=-1)
         x = self.output_layer(x)  # (batch, num_nodes, out_channels)
         return x

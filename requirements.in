@@ -13,8 +13,7 @@ scikit-learn
 # Dashboard
 dash
 plotly
+python-dotenv
 
-# Visualization (optional)
-streamlit
-folium
-pydeck
+# Optional planner explanation layer
+openai

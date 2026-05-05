@@ -5,7 +5,13 @@ Contains STGCN-based forecasting models for EV charging demand prediction.
 
 from .model import STGCNBlock, VidyutPrajnaForecaster
 from .graph_utils import get_adjacency_matrix
-from .forecaster import STGCNForecaster, TrainingInfo, FEATURE_COLS
+from .forecaster import (
+    FEATURE_COLS,
+    FUTURE_EXOG_COLS,
+    SEQUENCE_FEATURE_COLS,
+    STGCNForecaster,
+    TrainingInfo,
+)
 
 __all__ = [
     "STGCNBlock",
@@ -14,4 +20,6 @@ __all__ = [
     "TrainingInfo",
     "get_adjacency_matrix",
     "FEATURE_COLS",
+    "SEQUENCE_FEATURE_COLS",
+    "FUTURE_EXOG_COLS",
 ]

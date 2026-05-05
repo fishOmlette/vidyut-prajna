@@ -1,104 +1,91 @@
 # Vidyut Prajna
 
-AI-Driven Spatio-Temporal Intelligence for EV Charging Optimization in Bengaluru.
+AI-driven EV charging optimization and infrastructure-planning support for Bengaluru.
 
-## Overview
+## What The Prototype Shows
 
-Vidyut Prajna uses **STGCN (Spatio-Temporal Graph Convolutional Networks)** to forecast EV charging demand across Bengaluru's H3 hexagonal grid and optimize charging schedules to:
+- Contiguous H3 corridor simulation for Bengaluru instead of scattered citywide samples.
+- EV charging demand forecasting with an STGCN model using temporal, traffic, weather, tariff, solar, and neighboring-cell features.
+- Future-conditioned intelligence: the STGCN sees target-time exogenous signals and is guarded by persistence/seasonal baselines to avoid flat mean forecasts.
+- Charging schedule optimization that shifts flexible demand while preserving priority charging, deadlines, and transformer capacity constraints.
+- Infrastructure planning recommendations that rank candidate station locations against a uniform-placement baseline.
+- Optional grounded planner chat that explains computed dashboard outputs only. The app runs without an API key using a deterministic local fallback.
 
-- Reduce peak grid load
-- Minimize transformer stress
-- Optimize for BESCOM time-of-use tariffs
-- Maximize solar generation utilization
-- Enable V2G readiness
+## Dashboard Sections
 
-## Project Structure
-
-```
-vidyut-prajna/
-├── main.py                     # Entry point
-├── requirements.in             # Dependencies
-├── src/
-│   ├── spatial_grid/           # H3 grid & data simulation
-│   │   ├── simulation.py       # Bengaluru city simulation
-│   │   ├── generator.py        # Basic grid generation
-│   │   └── visualizer.py       # Visualization utilities
-│   ├── intelligence/           # Forecasting models
-│   │   ├── model.py            # STGCN architecture
-│   │   ├── forecaster.py       # High-level forecaster API
-│   │   └── graph_utils.py      # Graph utilities
-│   ├── optimization/           # Load optimization
-│   │   └── optimizer.py        # Constraint-aware optimizer
-│   └── dashboard/              # Web interface
-│       ├── app.py              # Dash application
-│       └── utils.py            # Dashboard utilities
-├── data/
-│   ├── raw/                    # Raw simulation outputs
-│   └── processed/              # Processed data
-└── praveen/                    # Praveen's reference implementation
-```
+- **Overview**: peak reduction, overload events, cost savings, model uncertainty, risk zones, and read-only sidecar mode.
+- **Demand Forecast**: adjacent H3 map, timeline playback, confidence bands, and actual-vs-predicted synthetic holdout.
+- **Scheduling Optimization**: unmanaged vs optimized EV charging, tariff signal, solar alignment, and energy preservation.
+- **Infrastructure Planning**: ranked station recommendations, capacity feasibility, and comparison with uniform placement.
+- **Data Sources**: synthetic telemetry, H3 graph, STGCN features, optimizer constraints, and LLM context policy.
+- **Explanation Assistant**: optional hosted LLM with synthetic/aggregated computed context only.
 
 ## Quick Start
 
 ```bash
-# Install dependencies
-pip install -r requirements.in
-
-# Or with uv
-uv pip install -r requirements.in
-
-# Run the dashboard
+python -m pip install -r requirements.txt
+copy .env.example .env
 python main.py
+```
 
-# Run tests
+Open:
+
+```text
+http://127.0.0.1:8050
+```
+
+Run tests:
+
+```bash
 python main.py --test
+```
 
-# Generate simulation data only
+Generate synthetic data only:
+
+```bash
 python main.py --simulate
 ```
 
-Then open: http://127.0.0.1:8050
+## Environment Variables
+
+Root configuration lives in `.env.example`.
+
+```bash
+SCENARIO=orr_whitefield
+H3_RESOLUTION=8
+MAX_CELLS=54
+NUM_DAYS=7
+FREQ=1h
+FORECAST_STEPS=24
+SEQ_LEN=12
+HIDDEN_SIZE=48
+STGCN_BLOCKS=2
+EPOCHS=10
+STATION_BUDGET=8
+PORT=8050
+```
+
+Optional explanation assistant:
+
+```bash
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-2.5-flash
+```
+
+No hosted LLM is required. If no API key is configured, the assistant uses local deterministic explanations from the same computed context.
 
 ## Architecture
 
-### STGCN Model
+- `src/spatial_grid`: contiguous Bengaluru scenario generation, H3 cells, adjacency, synthetic telemetry.
+- `src/intelligence`: STGCN forecasting model and feature engineering.
+- `src/optimization`: charging schedule optimizer and station siting recommender.
+- `src/dashboard`: Dash planning console, grounded explanation assistant, and UI helpers.
+- `praveen`: reference implementation only; `src/` is the canonical app.
 
-The forecasting model combines:
-- **Graph Convolution**: Captures spatial dependencies across H3 neighboring cells
-- **LSTM**: Captures temporal patterns (hourly, daily, weekly)
-- **BatchNorm + Dropout**: Regularization for better generalization
+## Constraints Covered
 
-### Optimization
-
-The optimizer shifts flexible EV charging load while respecting:
-- Priority (non-shiftable) charging requirements
-- Deadline constraints
-- Transformer capacity limits (with temperature derating)
-- BESCOM ToU tariff windows
-- Solar generation availability
-
-### Data Simulation
-
-Generates realistic Bengaluru digital twin with:
-- 20 neighborhood archetypes (residential, commercial, IT corridor, logistics, mixed)
-- Multi-class EV fleet (2W, 3W, 4W, bus)
-- Weather patterns (temperature, rainfall)
-- Traffic intensity profiles
-- BESCOM tariff signals
-- Rooftop solar generation
-
-## Environment Variables
-
-```bash
-H3_RESOLUTION=9       # H3 resolution (9 = ~100m)
-MAX_CELLS=30          # Number of H3 cells
-NUM_DAYS=5            # Simulation days
-FREQ=1h               # Time frequency
-EPOCHS=8              # Training epochs
-STGCN_BLOCKS=2        # Number of STGCN blocks
-PORT=8050             # Dashboard port
-```
-
-## License
-
-See [LICENSE](LICENSE)
+- No modification to existing distribution systems.
+- Synthetic or aggregated computed data only.
+- Explainable demand, scheduling, and siting recommendations.
+- Grid constraints: transformer capacity, temperature derating, overload events, priority charging, deadlines, tariff, and solar availability.
+- Baselines: unmanaged charging vs optimized scheduling, and uniform infrastructure placement vs ranked recommendations.

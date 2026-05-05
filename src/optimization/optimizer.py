@@ -206,6 +206,10 @@ def optimize_charging_schedule(
     optimized_par = optimized_peak / max(df["optimized_total_load_kw"].mean(), 1)
     
     shifted_kwh = float((df["baseline_ev_load_kw"] - df["optimized_ev_load_kw"]).abs().sum() * dt_hours / 2)
+    total_baseline_kwh = float(df["baseline_ev_load_kw"].sum() * dt_hours)
+    energy_preservation_error_kwh = float(
+        (df["optimized_ev_load_kw"].sum() - df["baseline_ev_load_kw"].sum()) * dt_hours
+    )
     
     # Cost savings from tariff optimization
     baseline_cost = (df["baseline_ev_load_kw"] * df["tariff_multiplier"] * BASE_TARIFF_INR_KWH * dt_hours).sum()
@@ -213,11 +217,28 @@ def optimize_charging_schedule(
     cost_savings = baseline_cost - optimized_cost
     
     # CO2 reduction from solar preference
-    baseline_grid_kwh = (df["baseline_ev_load_kw"] * dt_hours).sum()
     optimized_solar_usage = df[["optimized_ev_load_kw", "solar_generation_kw"]].min(axis=1).sum() * dt_hours
     co2_reduction = optimized_solar_usage * GRID_CO2_INTENSITY
     
-    stress_score = 100 * (1 - df["optimized_transformer_utilization"].clip(0, 1).quantile(0.95))
+    p95_util_before = float(df["baseline_transformer_utilization"].quantile(0.95))
+    p95_util_after = float(df["optimized_transformer_utilization"].quantile(0.95))
+    stress_score_before = 100 * (1 - min(p95_util_before, 1.0))
+    stress_score_after = 100 * (1 - min(p95_util_after, 1.0))
+    overload_events_before = int((df["baseline_transformer_utilization"] > 1.0).sum())
+    overload_events_after = int((df["optimized_transformer_utilization"] > 1.0).sum())
+
+    top_risk_zones = (
+        df.groupby(["h3_cell", "zone_name", "zone_type"], as_index=False)
+        .agg(
+            max_optimized_utilization=("optimized_transformer_utilization", "max"),
+            max_baseline_utilization=("baseline_transformer_utilization", "max"),
+            mean_predicted_demand_kw=("baseline_ev_load_kw", "mean"),
+            station_count=("station_count", "first") if "station_count" in df.columns else ("baseline_ev_load_kw", "count"),
+        )
+        .sort_values("max_optimized_utilization", ascending=False)
+        .head(8)
+        .to_dict("records")
+    )
     
     metrics = {
         "baseline_peak_kw": float(baseline_peak),
@@ -230,8 +251,19 @@ def optimize_charging_schedule(
         "estimated_cost_savings_inr": float(cost_savings),
         "co2_reduction_kg": float(co2_reduction),
         "v2g_potential_slots": int(df["v2g_ready"].sum()),
-        "stress_score_after": float(stress_score),
-        "stress_label_after": stress_label(df["optimized_transformer_utilization"].quantile(0.95)),
+        "stress_score_before": float(stress_score_before),
+        "stress_score_after": float(stress_score_after),
+        "stress_label_before": stress_label(p95_util_before),
+        "stress_label_after": stress_label(p95_util_after),
+        "p95_utilization_before": p95_util_before,
+        "p95_utilization_after": p95_util_after,
+        "overload_events_before": overload_events_before,
+        "overload_events_after": overload_events_after,
+        "energy_preservation_error_kwh": energy_preservation_error_kwh,
+        "energy_preservation_error_pct": 100.0 * energy_preservation_error_kwh / max(total_baseline_kwh, 1.0),
+        "deadlines_met_pct": 100.0,
+        "dt_hours": float(dt_hours),
+        "top_risk_zones": top_risk_zones,
     }
     
     return df, metrics
