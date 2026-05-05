@@ -6,12 +6,9 @@ A Plotly Dash prototype for EV charging demand forecasting and infrastructure-pl
 
 - Simulates traffic, weather, EV charging demand (multi-class fleet: 2W/3W/4W/bus), and transformer base load across ~20 Bengaluru neighbourhoods.
 - Divides Bengaluru into H3 hex cells with zone types: residential, commercial, logistics, IT-corridor, and mixed.
-- Trains an **STGCN (Spatio-Temporal Graph Convolutional Network)** forecaster that:
-  - Uses Graph Convolution to propagate information across H3 neighbors (spatial)
-  - Uses LSTM layers to capture temporal patterns
-  - Leverages day-of-week, weekend flag, tariff signal, solar generation, and weather/traffic features
+- Trains a graph-aware 2-layer GRU forecaster with temporal attention, using H3 neighbour demand, day-of-week, weekend flag, tariff signal, solar generation, and weather/traffic features.
 - Runs a tariff-aware, temperature-derated, solar-preferring optimizer that shifts flexible charging load while preserving priority charging and deadline windows.
-- Computes cost savings (BESCOM ToU), CO₂ reduction, V2G readiness, and confidence intervals.
+- Computes cost savings (BESCOM ToU), CO₂ reduction, V2G readiness, and confidence intervals (MC-dropout).
 - Visualises H3 demand, optimised load, transformer stress, aggregate load curves with solar overlay and confidence bands.
 - Adds a Gemini-powered LLM chat layer (via OpenAI-compatible endpoint) that explains computed outputs only.
 
@@ -23,12 +20,10 @@ The LLM does **not** forecast or optimize. It receives structured computed conte
 vidyut_prajna_prototype/
 ├── app.py                 # Dash dashboard
 ├── data_simulation.py     # Synthetic Bengaluru data generator
-├── model.py               # Original GRU + temporal attention forecaster
-├── model_stgcn.py         # STGCN forecaster (default, better spatial modeling)
+├── model.py               # 2-layer GRU + temporal attention forecaster
 ├── optimization.py        # Tariff/solar/temperature-aware optimizer
 ├── llm_interface.py       # Gemini LLM via OpenAI-compatible endpoint
 ├── utils.py               # Map, metrics, and LLM context helpers
-├── test_stgcn.py          # Unit tests for STGCN integration
 ├── requirements.txt
 ├── .env.example
 └── README.md
@@ -76,9 +71,7 @@ NUM_DAYS=3             # 2 days training + 1 day forecast by default.
 TRAIN_STEPS=192        # 2 days at 15-minute cadence.
 FORECAST_STEPS=96      # 1 day at 15-minute cadence.
 EPOCHS=12              # Increase for better fit, reduce for faster startup.
-HIDDEN_SIZE=48         # STGCN hidden dimension.
-STGCN_BLOCKS=2         # Number of spatio-temporal graph convolution blocks.
-SEQ_LEN=8              # Input sequence length (timesteps).
+HIDDEN_SIZE=48         # GRU hidden dimension.
 ```
 
 ## Notes
@@ -86,9 +79,5 @@ SEQ_LEN=8              # Input sequence length (timesteps).
 - All data is synthetic.
 - No control commands are sent to grid hardware.
 - The optimizer is a sidecar planning tool, not a SCADA control loop.
-- The model uses **STGCN architecture** (Spatio-Temporal Graph Convolutional Network):
-  - Graph Convolution layer propagates information across H3 neighbors
-  - LSTM layer captures temporal dependencies
-  - BatchNorm + Dropout for regularization
-  - Better spatial dependency modeling than simple GRU
+- The model is an STGCN-inspired simplified equivalent: H3 graph aggregation + 2-layer GRU + temporal attention.
 - BESCOM ToU tariff windows and Karnataka grid CO₂ intensity are modelled for cost/carbon estimates.

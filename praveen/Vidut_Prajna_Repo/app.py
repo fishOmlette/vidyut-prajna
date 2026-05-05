@@ -21,7 +21,7 @@ import plotly.graph_objects as go
 
 from data_simulation import CityConfig, generate_synthetic_city_data
 from llm_interface import VidyutLLM
-from model_stgcn import SpatioTemporalForecaster  # STGCN architecture for better spatial modeling
+from model import SpatioTemporalForecaster
 from optimization import optimize_charging_schedule
 from utils import aggregate_load_timeseries, build_geojson, build_llm_context
 
@@ -59,7 +59,6 @@ def bootstrap_demo() -> tuple[pd.DataFrame, pd.DataFrame, Dict[str, List[str]], 
         hidden_size=int(os.getenv("HIDDEN_SIZE", "48")),
         epochs=int(os.getenv("EPOCHS", "12")),
         seed=config.seed,
-        num_blocks=int(os.getenv("STGCN_BLOCKS", "2")),  # STGCN spatial-temporal blocks
     )
     forecaster.fit(train_df, adjacency)
     pred_df = forecaster.forecast(train_df, future_df, adjacency, horizon_steps=horizon_steps)
