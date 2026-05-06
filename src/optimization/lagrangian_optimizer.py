@@ -128,29 +128,31 @@ class LagrangianOptimizer:
         """Extract charging tasks from the demand data."""
         tasks = []
         task_index = {}
-        
+
         for idx, row in df.iterrows():
             demand_kw = float(row[demand_col])
             if demand_kw <= 0:
                 continue
-            
+
             priority_share = float(row.get("priority_share", 0.2))
             priority_kw = demand_kw * priority_share
             flexible_kw = demand_kw - priority_kw
-            
+
             time_idx = int(row["time_idx"])
             h3_cell = str(row["h3_cell"])
-            deadline = int(row.get("deadline_steps", 12))
-            
+            # Cap deadline at 6 steps (6h for 1h freq) to avoid extreme stacking.
+            # A task that originated at hour H cannot shift beyond H+6.
+            deadline = min(int(row.get("deadline_steps", 6)), 6)
+
             # Priority task (non-shiftable)
             if priority_kw > 0.1:
                 task = ChargingTask(
                     task_id=f"{h3_cell}:{time_idx}:priority",
                     h3_cell=h3_cell,
                     original_time_idx=time_idx,
-                    energy_kwh=priority_kw,  # kW treated as energy for single time step
+                    energy_kwh=priority_kw,
                     max_power_kw=priority_kw,
-                    priority_weight=2.0,  # High priority
+                    priority_weight=2.0,
                     deadline_time_idx=time_idx,  # Must happen now
                     soc_current=20.0,
                     soc_target=80.0,
@@ -159,8 +161,8 @@ class LagrangianOptimizer:
                 )
                 tasks.append(task)
                 task_index[(h3_cell, time_idx, "priority")] = len(tasks) - 1
-            
-            # Flexible task (shiftable)
+
+            # Flexible task (shiftable within deadline)
             if flexible_kw > 0.1:
                 max_deadline = time_idx + deadline
                 task = ChargingTask(
@@ -169,7 +171,7 @@ class LagrangianOptimizer:
                     original_time_idx=time_idx,
                     energy_kwh=flexible_kw,
                     max_power_kw=flexible_kw,
-                    priority_weight=1.0,  # Normal priority
+                    priority_weight=1.0,
                     deadline_time_idx=max_deadline,
                     soc_current=30.0,
                     soc_target=80.0,
@@ -178,7 +180,7 @@ class LagrangianOptimizer:
                 )
                 tasks.append(task)
                 task_index[(h3_cell, time_idx, "flexible")] = len(tasks) - 1
-        
+
         return tasks, task_index
     
     def _compute_load_profile(
@@ -312,71 +314,89 @@ class LagrangianOptimizer:
     ) -> Dict[str, int]:
         """
         Solve the Lagrangian subproblem for given multipliers.
-        
-        This decomposes into independent problems per task:
-        For each task, find the time slot that minimizes:
-            task_cost + λ(cell,t) × power
-        
-        Subject to deadline constraints.
+
+        For each shiftable task, find the time slot in [t_orig, deadline] that
+        minimises:  tariff_cost + shadow_price - solar_bonus
+        while respecting transformer capacity *including already-committed load*
+        from other tasks assigned to the same (cell, time) slot.
         """
         allocation = {}
         unique_times = sorted(df["timestamp"].unique())
         n_times = len(unique_times)
-        
+
         # Build multiplier lookup
         mult_lookup = {key: mult for key, mult in zip(key_order, multipliers)}
-        
+
+        # Pre-build feature lookup: (cell, t_idx) -> row
+        feature_lookup: Dict[Tuple[str, int], pd.Series] = {}
+        for _, row in df.iterrows():
+            feature_lookup[(str(row["h3_cell"]), int(row["time_idx"]))] = row
+
+        # Track committed EV load per (cell, t_idx) to enforce capacity.
+        # This prevents multiple tasks piling into the same slot.
+        committed: Dict[Tuple[str, int], float] = {}
+
         for task in tasks:
             if not task.is_shiftable:
-                # Non-shiftable tasks stay at original time
                 allocation[task.task_id] = task.original_time_idx
+                # Count non-shiftable load as committed
+                key0 = (task.h3_cell, task.original_time_idx)
+                committed[key0] = committed.get(key0, 0.0) + task.energy_kwh
                 continue
-            
-            # Find feasible time window
+
+            # Feasible time window
             t_start = task.original_time_idx
             t_end = min(task.deadline_time_idx, n_times - 1)
-            
+
             best_t = t_start
             best_cost = float("inf")
-            
+
             for t_idx in range(t_start, t_end + 1):
-                # Get features at this time
-                mask = (df["h3_cell"] == task.h3_cell) & (df["time_idx"] == t_idx)
-                if not mask.any():
+                row = feature_lookup.get((task.h3_cell, t_idx))
+                if row is None:
                     continue
-                
-                row = df.loc[mask].iloc[0]
+
                 tariff = float(row["tariff_multiplier"])
                 solar = float(row.get("solar_generation_kw", 0))
                 capacity = derated_capacity(
                     float(row["transformer_capacity_kw"]),
                     float(row.get("temperature_c", 30))
                 )
-                
-                # Check if slot is feasible
+
+                # Feasibility: base load + already-committed + this task <= max
                 base_load = float(row["grid_base_load_kw"])
+                already_committed = committed.get((task.h3_cell, t_idx), 0.0)
+                total_if_assigned = base_load + already_committed + task.energy_kwh
                 max_allowed = capacity * self.max_utilization
-                if base_load + task.energy_kwh > max_allowed:
+                if total_if_assigned > max_allowed:
                     continue
-                
-                # Lagrangian cost
+
+                # Lagrangian cost = tariff + shadow_price + grid_stress - solar_bonus
+                # The grid_stress term is crucial: without it tasks pick the lowest
+                # tariff slot regardless of whether the grid is already overloaded.
                 key = (task.h3_cell, t_idx)
                 mult = mult_lookup.get(key, 0.0)
-                
-                # Cost = tariff + shadow price - solar bonus
                 solar_bonus = min(solar / max(task.energy_kwh, 1), 1.0)
+
+                # Normalised current grid utilisation at this (cell, slot)
+                grid_util = (base_load + already_committed) / max(capacity, 1.0)
+
                 cost = (
-                    self.gamma_tariff * tariff * task.energy_kwh +
-                    mult * task.energy_kwh -
-                    self.gamma_solar * solar_bonus * task.energy_kwh
+                    self.gamma_tariff * tariff * task.energy_kwh
+                    + mult * task.energy_kwh
+                    + self.alpha * grid_util * task.energy_kwh   # prefer low-load slots
+                    - self.gamma_solar * solar_bonus * task.energy_kwh
                 )
-                
+
                 if cost < best_cost:
                     best_cost = cost
                     best_t = t_idx
-            
+
             allocation[task.task_id] = best_t
-        
+            # Mark this slot as having committed load
+            commit_key = (task.h3_cell, best_t)
+            committed[commit_key] = committed.get(commit_key, 0.0) + task.energy_kwh
+
         return allocation
     
     def _find_minimum_regret(
@@ -450,7 +470,7 @@ class LagrangianOptimizer:
         # Ensure required columns
         for col, default in [
             ("priority_share", 0.2),
-            ("deadline_steps", 12),
+            ("deadline_steps", 6),
             ("tariff_multiplier", 1.0),
             ("solar_generation_kw", 0.0),
             ("temperature_c", 30.0),
@@ -461,7 +481,9 @@ class LagrangianOptimizer:
                 df[col] = default
         
         df["priority_share"] = df["priority_share"].clip(0.0, 0.9).fillna(0.2)
-        df["deadline_steps"] = df["deadline_steps"].fillna(12).astype(int).clip(1, len(unique_times) - 1)
+        # Cap deadline to 6 steps (6h for 1h freq) to prevent tasks from shifting
+        # across the entire horizon and piling into a single cheap tariff slot.
+        df["deadline_steps"] = df["deadline_steps"].fillna(6).astype(int).clip(1, 6)
         
         # Extract tasks
         tasks, _ = self._build_tasks(df, demand_col)
@@ -574,27 +596,47 @@ class LagrangianOptimizer:
         allocation: Dict[str, int],
         demand_col: str,
     ) -> pd.DataFrame:
-        """Apply the optimized allocation to the DataFrame."""
-        df["optimized_ev_load_kw"] = 0.0
+        """Apply the optimized allocation to the DataFrame.
+
+        Approach: start from the baseline (every row keeps its original demand),
+        then subtract the energy of each task from its original slot and add it
+        to its assigned slot.  This ensures rows with no shiftable demand are
+        not zeroed out, which was the main cause of the inflated post-optimization
+        peak in the previous version.
+        """
         df["baseline_ev_load_kw"] = df[demand_col]
-        
-        # Build load by (cell, time)
-        cell_time_optimized: Dict[Tuple[str, int], float] = {}
-        
+        # Start with baseline; we'll apply shift deltas below
+        df["optimized_ev_load_kw"] = df[demand_col].astype(float)
+
+        # Build delta maps: (cell, t_idx) -> net kW change
+        delta: Dict[Tuple[str, int], float] = {}
+
         for task in tasks:
-            assigned_t = allocation.get(task.task_id, task.original_time_idx)
-            key = (task.h3_cell, assigned_t)
-            cell_time_optimized[key] = cell_time_optimized.get(key, 0) + task.energy_kwh
-        
-        # Apply to DataFrame
-        for (cell, t_idx), load in cell_time_optimized.items():
+            orig_t = task.original_time_idx
+            assigned_t = allocation.get(task.task_id, orig_t)
+
+            if orig_t == assigned_t:
+                continue  # No shift — nothing to do
+
+            # Remove energy from original slot
+            remove_key = (task.h3_cell, orig_t)
+            delta[remove_key] = delta.get(remove_key, 0.0) - task.energy_kwh
+
+            # Add energy to assigned slot
+            add_key = (task.h3_cell, assigned_t)
+            delta[add_key] = delta.get(add_key, 0.0) + task.energy_kwh
+
+        # Apply deltas
+        for (cell, t_idx), d in delta.items():
             mask = (df["h3_cell"] == cell) & (df["time_idx"] == t_idx)
-            df.loc[mask, "optimized_ev_load_kw"] = load
-        
+            df.loc[mask, "optimized_ev_load_kw"] = (
+                df.loc[mask, "optimized_ev_load_kw"] + d
+            ).clip(lower=0.0)
+
         # Compute derived columns
         df["baseline_total_load_kw"] = df["grid_base_load_kw"] + df["baseline_ev_load_kw"]
         df["optimized_total_load_kw"] = df["grid_base_load_kw"] + df["optimized_ev_load_kw"]
-        
+
         df["effective_capacity_kw"] = df.apply(
             lambda r: derated_capacity(
                 float(r["transformer_capacity_kw"]),
@@ -602,14 +644,14 @@ class LagrangianOptimizer:
             ),
             axis=1
         )
-        
+
         df["baseline_transformer_utilization"] = df["baseline_total_load_kw"] / df["effective_capacity_kw"]
         df["optimized_transformer_utilization"] = df["optimized_total_load_kw"] / df["effective_capacity_kw"]
         df["stress_label"] = df["optimized_transformer_utilization"].apply(stress_label)
-        
+
         # V2G readiness
         df["v2g_ready"] = (df["optimized_transformer_utilization"] < 0.6) & (df["tariff_multiplier"] >= 1.0)
-        
+
         return df
     
     def _compute_metrics(

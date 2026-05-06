@@ -170,4 +170,4 @@ def format_pct(v: float) -> str:
 
 def format_inr(v: float) -> str:
     """Format rupees for display."""
-    return f"₹{v:,.0f}"
+    return f"INR {v:,.0f}"

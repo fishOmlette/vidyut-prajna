@@ -1,6 +1,6 @@
 """EV charging schedule optimizer for Vidyut Prajna.
 
-Implements constraint-aware load shifting with:
+Default implementation uses a robust rolling-horizon linear program with:
 - BESCOM time-of-use tariff optimization
 - Temperature-dependent transformer derating
 - Solar generation preference
@@ -54,7 +54,7 @@ def optimize_charging_schedule(
 ) -> Tuple[pd.DataFrame, Dict[str, object]]:
     """Optimize EV charging schedule to reduce peaks and costs.
     
-    Shifts flexible charging load while preserving:
+    Shifts flexible charging load with a robust LP while preserving:
     - Priority (non-shiftable) charging
     - Deadline constraints
     - Transformer capacity limits
@@ -72,6 +72,23 @@ def optimize_charging_schedule(
         optimized_df: DataFrame with optimized loads
         metrics: Dict of optimization metrics
     """
+    from src.optimization.robust_optimizer import (
+        RobustOptimizerConfig,
+        RobustRollingHorizonOptimizer,
+    )
+
+    optimizer = RobustRollingHorizonOptimizer(
+        RobustOptimizerConfig(
+            max_utilization=max_transformer_utilization,
+            peak_weight=max(0.1, 8.0 * alpha),
+            deviation_weight=max(0.01, 0.18 * beta),
+            tariff_weight=gamma_tariff,
+            solar_weight=gamma_solar,
+            delay_weight=max(0.01, 0.22 * beta),
+        )
+    )
+    return optimizer.optimize(prediction_df, demand_col)
+
     df = prediction_df.copy().sort_values(["timestamp", "h3_cell"]).reset_index(drop=True)
     
     if demand_col not in df.columns:
