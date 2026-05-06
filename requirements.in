@@ -1,9 +1,19 @@
+# Core dependencies
 h3
 pandas
 numpy
 matplotlib
+
+# Deep learning
 torch
+
+# ML utilities
 scikit-learn
-streamlit
-folium
-pydeck
+
+# Dashboard
+dash
+plotly
+python-dotenv
+
+# Optional planner explanation layer
+openai
