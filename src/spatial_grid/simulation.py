@@ -38,7 +38,6 @@ from src.spatial_grid._base import (
     build_h3_grid,
 )
 
-# Re-export CityConfig and generate_synthetic_data for backward compatibility
 __all__ = [
     "CityConfig",
     "generate_synthetic_data", 
@@ -48,12 +47,7 @@ __all__ = [
 ]
 
 
-# ============================================================================
-# GIG FLEET (SWIGGY/ZOMATO) CONGREGATION POINTS
-# ============================================================================
-
 GIG_CONGREGATION_POINTS = [
-    # Major restaurant clusters where delivery fleets congregate
     {"name": "Koramangala 5th Block",    "lat": 12.9341, "lon": 77.6146, "peak_vehicles": 85, "type": "restaurant_hub"},
     {"name": "HSR Sector 2",              "lat": 12.9120, "lon": 77.6389, "peak_vehicles": 72, "type": "restaurant_hub"},
     {"name": "Indiranagar 100ft Road",    "lat": 12.9784, "lon": 77.6408, "peak_vehicles": 95, "type": "restaurant_hub"},
@@ -62,14 +56,10 @@ GIG_CONGREGATION_POINTS = [
     {"name": "Jayanagar 4th Block",       "lat": 12.9271, "lon": 77.5816, "peak_vehicles": 65, "type": "restaurant_hub"},
     {"name": "BTM 2nd Stage",             "lat": 12.9166, "lon": 77.6101, "peak_vehicles": 58, "type": "restaurant_hub"},
     {"name": "Marathahalli Bridge",       "lat": 12.9591, "lon": 77.7009, "peak_vehicles": 75, "type": "restaurant_hub"},
-    
-    # E-commerce fulfillment centers (Flipkart, Amazon Delivery)
     {"name": "Electronic City FC",        "lat": 12.8450, "lon": 77.6600, "peak_vehicles": 120, "type": "fulfillment"},
     {"name": "Peenya Industrial",         "lat": 13.0280, "lon": 77.5197, "peak_vehicles": 150, "type": "fulfillment"},
     {"name": "Yelahanka FC",              "lat": 13.1007, "lon": 77.5963, "peak_vehicles": 90, "type": "fulfillment"},
     {"name": "Sarjapur FC",               "lat": 12.9100, "lon": 77.6860, "peak_vehicles": 85, "type": "fulfillment"},
-    
-    # Quick commerce hubs (Zepto, Blinkit, Instamart)
     {"name": "Domlur Dark Store",         "lat": 12.9610, "lon": 77.6387, "peak_vehicles": 45, "type": "quick_commerce"},
     {"name": "JP Nagar Dark Store",       "lat": 12.9063, "lon": 77.5857, "peak_vehicles": 40, "type": "quick_commerce"},
     {"name": "Hebbal Dark Store",         "lat": 13.0358, "lon": 77.5970, "peak_vehicles": 42, "type": "quick_commerce"},
@@ -79,8 +69,8 @@ GIG_CONGREGATION_POINTS = [
 @dataclass
 class GigFleetConfig:
     """Configuration for gig economy fleet simulation."""
-    total_2w_vehicles: int = 15000  # Estimated Swiggy/Zomato 2W in Bengaluru
-    total_3w_vehicles: int = 3000   # Estimated 3W delivery fleet
+    total_2w_vehicles: int = 15000
+    total_3w_vehicles: int = 3000
     avg_daily_trips_per_vehicle: int = 12
     charging_kw_2w: float = 3.3
     charging_kw_3w: float = 7.4
@@ -163,10 +153,6 @@ def compute_gig_fleet_demand(
     
     return round(total_demand, 2), total_vehicles
 
-
-# ============================================================================
-# OCPP CHARGING SESSION SIMULATION
-# ============================================================================
 
 @dataclass
 class OCPPSession:
@@ -281,10 +267,6 @@ def simulate_ocpp_sessions(
     return sessions
 
 
-# ============================================================================
-# MONSOON WEATHER SIMULATION (BENGALURU MAY-SEPTEMBER)
-# ============================================================================
-
 @dataclass
 class MonsoonConfig:
     """Configuration for Bengaluru monsoon simulation."""
@@ -375,11 +357,6 @@ def simulate_monsoon_weather(
     }
 
 
-# ============================================================================
-# REALISTIC TRAFFIC SIMULATION
-# ============================================================================
-
-# Real Bengaluru traffic congestion indices by area (relative to city average)
 CONGESTION_INDICES = {
     "Silk Board Junction": 1.8,
     "KR Puram":            1.6,
@@ -469,10 +446,6 @@ def simulate_traffic_intensity(
         "avg_speed_kmh": round(avg_speed, 1),
     }
 
-
-# ============================================================================
-# DTR (DISTRIBUTION TRANSFORMER) TOPOLOGY
-# ============================================================================
 
 @dataclass
 class DTRSpec:
@@ -581,10 +554,6 @@ def generate_dtr_topology(
     return dtrs
 
 
-# ============================================================================
-# K-ANONYMITY MASKING FOR PRIVACY
-# ============================================================================
-
 @dataclass
 class AnonymizationConfig:
     """Configuration for K-anonymity data masking."""
@@ -662,10 +631,6 @@ def apply_k_anonymity(
     
     return masked
 
-
-# ============================================================================
-# ENHANCED DATA GENERATION
-# ============================================================================
 
 def generate_enhanced_synthetic_data(
     config: CityConfig = None,

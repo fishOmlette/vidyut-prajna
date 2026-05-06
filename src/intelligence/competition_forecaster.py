@@ -126,10 +126,6 @@ class CompetitionForecaster:
         self._global_slot_mean: Dict[Tuple[int, int], float] = {}
         self._global_mean: float = 0.0
 
-    # ------------------------------------------------------------------
-    # Feature engineering
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _minute_of_day(ts: pd.Timestamp) -> int:
         return int(ts.hour * 60 + ts.minute)
@@ -262,10 +258,6 @@ class CompetitionForecaster:
         out[numeric_cols] = out[numeric_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0)
         return out
 
-    # ------------------------------------------------------------------
-    # Baselines and tensors
-    # ------------------------------------------------------------------
-
     def _fit_baselines(self, frame: pd.DataFrame) -> None:
         grouped = frame.groupby(["h3_cell", "minute_of_day", "is_weekend"])["demand_kw"].mean()
         self._seasonal_lookup = {
@@ -347,10 +339,6 @@ class CompetitionForecaster:
 
     def _denormalize_y(self, y: np.ndarray) -> np.ndarray:
         return y * self.target_std + self.target_mean
-
-    # ------------------------------------------------------------------
-    # Training
-    # ------------------------------------------------------------------
 
     def fit(self, train_df: pd.DataFrame, adjacency: Dict[str, List[str]]) -> "CompetitionForecaster":
         torch.manual_seed(self.seed)
@@ -499,10 +487,6 @@ class CompetitionForecaster:
         for feature, weight in zip(ADVANCED_FUTURE_EXOG_COLS, future_weights):
             records.append({"feature": feature, "weight": float(weight), "source": "known_future"})
         self.feature_importance_ = pd.DataFrame(records).sort_values("weight", ascending=False).reset_index(drop=True)
-
-    # ------------------------------------------------------------------
-    # Inference and diagnostics
-    # ------------------------------------------------------------------
 
     def _build_inference_tensors(
         self,

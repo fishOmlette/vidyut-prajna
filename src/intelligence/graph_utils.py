@@ -1,3 +1,5 @@
+"""Graph adjacency utilities for STGCN spatial modeling."""
+
 import h3
 import torch
 import numpy as np

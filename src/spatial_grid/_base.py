@@ -66,7 +66,6 @@ DEMO_SCENARIOS = {
     },
 }
 
-# Zone-specific parameters
 ZONE_PARAMS = {
     "residential": {
         "capacity_range": (380, 720),       # Transformer capacity kVA
@@ -100,7 +99,6 @@ ZONE_PARAMS = {
     },
 }
 
-# EV fleet power draws (kW) and share weights per zone
 FLEET_MIX = {
     "residential":  {"2W": (3.3, 0.40), "3W": (7.4, 0.10), "4W": (22.0, 0.45), "bus": (60.0, 0.05)},
     "commercial":   {"2W": (3.3, 0.15), "3W": (7.4, 0.15), "4W": (22.0, 0.55), "bus": (60.0, 0.15)},

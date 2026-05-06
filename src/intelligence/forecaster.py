@@ -149,10 +149,6 @@ class STGCNForecaster:
         self._global_slot_mean: Dict[Tuple[int, int], float] = {}
         self._global_mean: float = 0.0
 
-    # ------------------------------------------------------------------
-    # Feature Engineering
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _minute_of_day(ts: pd.Timestamp) -> int:
         return int(ts.hour * 60 + ts.minute)
@@ -240,10 +236,6 @@ class STGCNForecaster:
             out["neighbor_demand_kw"] = out["demand_kw"]
         return out
 
-    # ------------------------------------------------------------------
-    # Baselines
-    # ------------------------------------------------------------------
-
     def _fit_baselines(self, frame: pd.DataFrame) -> None:
         grouped = frame.groupby(["h3_cell", "minute_of_day", "is_weekend"])["demand_kw"].mean()
         self._seasonal_lookup = {
@@ -277,10 +269,6 @@ class STGCNForecaster:
         if rows.empty:
             return 0.0
         return float(rows["demand_kw"].iloc[-1])
-
-    # ------------------------------------------------------------------
-    # Sequence Building
-    # ------------------------------------------------------------------
 
     def _build_sequences(self, frame: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Build (hist, future, target) tensors from the long-format frame.
@@ -366,10 +354,6 @@ class STGCNForecaster:
 
     def _denormalize_y(self, y: np.ndarray) -> np.ndarray:
         return y * self.target_std + self.target_mean
-
-    # ------------------------------------------------------------------
-    # Training
-    # ------------------------------------------------------------------
 
     def fit(self, train_df: pd.DataFrame, adjacency: Dict[str, List[str]]) -> "STGCNForecaster":
         torch.manual_seed(self.seed)
@@ -480,10 +464,6 @@ class STGCNForecaster:
             final_val_loss=final_val_loss,
         )
         return self
-
-    # ------------------------------------------------------------------
-    # Inference
-    # ------------------------------------------------------------------
 
     def _build_one_step_tensors(
         self,

@@ -37,12 +37,8 @@ class KDEConfig:
     temporal_bandwidth_hours: float = 1.5  # Kernel bandwidth for time
     spatial_bandwidth_km: float = 0.8      # Kernel bandwidth for space
     min_samples: int = 10                   # Minimum samples for valid KDE
-    grid_resolution_minutes: int = 15       # Prediction resolution
+    grid_resolution_minutes: int = 15
 
-
-# ---------------------------------------------------------------------------
-# Kernel helpers (scalar — kept for reference / single-point use)
-# ---------------------------------------------------------------------------
 
 def gaussian_kernel(distance: float, bandwidth: float) -> float:
     """Standard Gaussian kernel (scalar)."""
@@ -62,10 +58,6 @@ def _gaussian_kernel_vec(distances: np.ndarray, bandwidth: float) -> np.ndarray:
     return np.exp(-0.5 * (distances / bandwidth) ** 2)
 
 
-# ---------------------------------------------------------------------------
-# Haversine (vectorised)
-# ---------------------------------------------------------------------------
-
 def _haversine_km_vec(
     lat1: float, lon1: float,
     lats2: np.ndarray, lons2: np.ndarray,
@@ -79,10 +71,6 @@ def _haversine_km_vec(
     a = np.sin(dphi / 2) ** 2 + math.cos(phi1) * np.cos(phi2) * np.sin(dlambda / 2) ** 2
     return 2 * R * np.arcsin(np.sqrt(np.clip(a, 0, 1)))
 
-
-# ---------------------------------------------------------------------------
-# Main KDE class
-# ---------------------------------------------------------------------------
 
 class SpatioTemporalKDE:
     """
@@ -119,10 +107,6 @@ class SpatioTemporalKDE:
         self._dist_cache: Dict[str, np.ndarray] = {}
 
         self.fitted = False
-
-    # ------------------------------------------------------------------
-    # Fit
-    # ------------------------------------------------------------------
 
     def _finalise_fit(self) -> None:
         """Build vectorised lookup arrays from self.arrival_data."""
@@ -218,10 +202,6 @@ class SpatioTemporalKDE:
 
         self._finalise_fit()
         return self
-
-    # ------------------------------------------------------------------
-    # Vectorised density evaluation
-    # ------------------------------------------------------------------
 
     def _get_distances(self, target_cell: str) -> np.ndarray:
         """Return (n_samples,) distance array from target_cell to every sample cell.
@@ -350,10 +330,6 @@ class SpatioTemporalKDE:
         return peaks[:n_peaks]
 
 
-# ---------------------------------------------------------------------------
-# Neighbor demand propagation (vectorised)
-# ---------------------------------------------------------------------------
-
 class NeighborDemandPropagation:
     """
     Model demand propagation between neighboring H3 cells.
@@ -444,10 +420,6 @@ class NeighborDemandPropagation:
         return df
 
 
-# ---------------------------------------------------------------------------
-# Public entry-point
-# ---------------------------------------------------------------------------
-
 def add_kde_features(
     df: pd.DataFrame,
     adjacency: Dict[str, List[str]],
@@ -469,14 +441,10 @@ def add_kde_features(
     """
     df = df.copy()
 
-    # --- Fit KDE -----------------------------------------------------------
     kde = SpatioTemporalKDE()
     fit_df = historical_df if historical_df is not None else df
     kde.fit_from_demand(fit_df)
 
-    # --- Batch arrival-rate computation ------------------------------------
-    # Build a lookup table: (cell, hour_bucket, is_weekend) → rate
-    # This avoids re-running KDE for rows that share the same (cell, hour).
     unique_cells = df["h3_cell"].unique().tolist()
     df_ts = pd.to_datetime(df["timestamp"])
     hours_float = df_ts.dt.hour + df_ts.dt.minute / 60.0
@@ -498,8 +466,6 @@ def add_kde_features(
 
     df["predicted_arrival_rate"] = arrival_rates
 
-    # --- Neighbor demand (pivot-based, vectorised) -------------------------
-    # pivot: timestamp × cell → demand_kw
     pivot_demand = df.pivot_table(
         index="timestamp", columns="h3_cell", values="demand_kw", aggfunc="mean"
     ).fillna(0.0)
@@ -538,16 +504,12 @@ def add_kde_features(
             df["neighbor_demand_kw"] = 0.0
         df["neighbor_demand_kw"] = df["neighbor_demand_kw"].fillna(0.0)
 
-    # --- Neighbor pressure (vectorised) ------------------------------------
+
     propagation = NeighborDemandPropagation()
     df = propagation.compute_neighbor_pressure(df, adjacency)
 
     return df
 
-
-# ---------------------------------------------------------------------------
-# Module self-test
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     import sys
