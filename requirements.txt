@@ -37,6 +37,8 @@ fonttools==4.62.1
     # via matplotlib
 fsspec==2026.4.0
     # via torch
+gunicorn==26.0.0
+    # via -r requirements.in
 h11==0.16.0
     # via httpcore
 h3==4.4.2
@@ -91,6 +93,7 @@ openai==2.34.0
     # via -r requirements.in
 packaging==26.2
     # via
+    #   gunicorn
     #   matplotlib
     #   plotly
 pandas==3.0.2
