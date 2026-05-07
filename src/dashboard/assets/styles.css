@@ -477,6 +477,34 @@ body {
     background: var(--gray-200);
 }
 
+/* Global Time Controls */
+.global-time-controls {
+    background: var(--surface-primary);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4) var(--space-6);
+    margin: var(--space-4) auto var(--space-6);
+    max-width: 1400px;
+    box-shadow: var(--shadow-md);
+    border: 1px solid var(--gray-200);
+}
+
+.time-control-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    margin-bottom: var(--space-3);
+}
+
+.time-display {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--gray-700);
+    padding: var(--space-2) var(--space-4);
+    background: var(--gray-100);
+    border-radius: var(--radius-md);
+    font-family: var(--font-mono);
+}
+
 .radio-row {
     display: flex;
     gap: var(--space-4);
